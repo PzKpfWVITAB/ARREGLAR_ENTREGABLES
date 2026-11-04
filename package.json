@@ -1,0 +1,20 @@
+{
+  "name": "verificador-caratulas-pdf",
+  "version": "1.0.0",
+  "description": "Detector y verificador de carátulas en documentos PDF para rutas de red",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "pdf",
+    "ocr",
+    "opencv",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^34.5.8"
+  }
+}
