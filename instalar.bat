@@ -28,9 +28,11 @@ if %ERRORLEVEL% neq 0 (
         exit /b 1
     )
 )
-for /f "tokens=*" %%i in ('!PYTHON_EXE! --version') do echo [+] %%i detectado.
+echo [+] Python activo:
+!PYTHON_EXE! --version
 
 :: 2. Verificar Node.js y npm
+echo.
 echo [*] Verificando instalacion de Node.js / NPM...
 npm --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
@@ -40,8 +42,9 @@ if %ERRORLEVEL% neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=*" %%i in ('node --version') do echo [+] Node.js %%i detectado.
-for /f "tokens=*" %%i in ('npm --version') do echo [+] NPM v%%i detectado.
+echo [+] Node.js y npm activos:
+call node --version
+call npm --version
 
 :: 3. Crear entorno virtual local aislado (.venv)
 echo.
