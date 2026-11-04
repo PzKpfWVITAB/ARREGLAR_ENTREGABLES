@@ -54,6 +54,7 @@ out/
 # ==========================================
 reporte_caratulas.html
 reporte_caratulas_*.csv
+instalacion_log.txt
 doc_cover_checker_cache/
 tests/mock_data/*.html
 
