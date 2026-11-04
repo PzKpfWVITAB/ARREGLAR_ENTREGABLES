@@ -1,6 +1,22 @@
-// Lógica Frontend para Electron
+// Lógica Frontend para Electron con soporte de Hardware al 90%
 document.addEventListener("DOMContentLoaded", () => {
-  // Elementos DOM
+  // Elementos DOM de Hardware
+  const hwCpuVal = document.getElementById("hwCpuVal");
+  const hwCpuSub = document.getElementById("hwCpuSub");
+  const hwRamVal = document.getElementById("hwRamVal");
+  const hwRamSub = document.getElementById("hwRamSub");
+  const hwGpuVal = document.getElementById("hwGpuVal");
+  const hwGpuSub = document.getElementById("hwGpuSub");
+  const hwGpuContainer = document.getElementById("hwGpuContainer");
+  const badgeGpuInfo = document.getElementById("badgeGpuInfo");
+  const badgeWorkersInfo = document.getElementById("badgeWorkersInfo");
+  const resourceSlider = document.getElementById("resourceSlider");
+  const sliderValDisplay = document.getElementById("sliderValDisplay");
+  const workersCountDisplay = document.getElementById("workersCountDisplay");
+  const chkGpuAccel = document.getElementById("chkGpuAccel");
+  const btnRefreshHw = document.getElementById("btnRefreshHw");
+
+  // Elementos DOM de Lote
   const workDirInput = document.getElementById("workDirInput");
   const coverPathInput = document.getElementById("coverPathInput");
   const btnBrowseDir = document.getElementById("btnBrowseDir");
@@ -39,8 +55,82 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentResults = [];
   let currentFilter = "all";
   let isAnalyzing = false;
+  let detectedHw = null;
+  let activeWorkers = 4;
 
-  // 1. Selección de Directorio
+  // 1. Detección Automática de Hardware (CPU, RAM, GPU NVIDIA)
+  async function loadHardwareSpecs() {
+    badgeGpuInfo.textContent = "🔍 Detectando...";
+    try {
+      const hw = await window.api.getHardwareInfo();
+      if (!hw) {
+        hwCpuVal.textContent = "Detectado estándar";
+        hwRamVal.textContent = "Memoria estándar";
+        hwGpuVal.textContent = "Modo CPU";
+        return;
+      }
+      detectedHw = hw;
+
+      // CPU
+      const cpu = hw.cpu;
+      hwCpuVal.textContent = `${cpu.logical_cores} Cores lógicos (${cpu.physical_cores} físicos)`;
+      updateWorkersFromSlider();
+
+      // RAM
+      const ram = hw.ram;
+      hwRamVal.textContent = `${ram.total_gb} GB (${ram.available_gb} GB Libres)`;
+      hwRamSub.textContent = `Límite al 90%: ${ram.recommended_limit_gb} GB para buffer de visión`;
+
+      // GPU
+      const gpu = hw.gpu;
+      if (gpu.detected) {
+        const prim = gpu.primary;
+        hwGpuVal.textContent = prim.name + (prim.vram_gb ? ` (${prim.vram_gb} GB VRAM)` : "");
+        
+        if (gpu.has_nvidia) {
+          hwGpuContainer.className = "hw-item nvidia";
+          hwGpuSub.textContent = "✓ Aceleración NVIDIA CUDA / Tensor Cores disponible";
+          badgeGpuInfo.textContent = "🎮 NVIDIA Activa";
+          badgeGpuInfo.style.borderColor = "var(--nvidia)";
+          badgeGpuInfo.style.color = "#a3e635";
+        } else if (gpu.opencl_acceleration) {
+          hwGpuContainer.className = "hw-item highlight";
+          hwGpuSub.textContent = "✓ Aceleración OpenCL de matriz gráfica activa";
+          badgeGpuInfo.textContent = "⚡ GPU OpenCL";
+        } else {
+          hwGpuSub.textContent = "GPU detectada (renderizado estándar)";
+          badgeGpuInfo.textContent = "GPU Detectada";
+        }
+      } else {
+        hwGpuVal.textContent = "Gráficos Integrados";
+        hwGpuSub.textContent = "Modo Multiproceso CPU de alto rendimiento";
+        badgeGpuInfo.textContent = "CPU Multi-core";
+      }
+
+    } catch (err) {
+      console.error("Error al cargar hardware:", err);
+      badgeGpuInfo.textContent = "CPU Estándar";
+    }
+  }
+
+  function updateWorkersFromSlider() {
+    const percent = parseInt(resourceSlider.value, 10);
+    sliderValDisplay.textContent = `${percent}%`;
+
+    const totalCores = detectedHw?.cpu?.logical_cores || 4;
+    activeWorkers = Math.max(1, Math.floor(totalCores * (percent / 100)));
+    workersCountDisplay.textContent = activeWorkers;
+    badgeWorkersInfo.textContent = `⚡ ${activeWorkers} Workers (${percent}%)`;
+    hwCpuSub.textContent = `Asignación al ${percent}%: ${activeWorkers} workers paralelos`;
+  }
+
+  resourceSlider.addEventListener("input", updateWorkersFromSlider);
+  btnRefreshHw.addEventListener("click", loadHardwareSpecs);
+
+  // Iniciar detección de inmediato
+  loadHardwareSpecs();
+
+  // 2. Selección de Directorio de Red
   btnBrowseDir.addEventListener("click", async () => {
     const dir = await window.api.selectDirectory();
     if (dir) {
@@ -49,7 +139,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 2. Selección de Carátula Modelo
+  // 3. Selección de Carátula Modelo
   btnBrowseCover.addEventListener("click", async () => {
     const file = await window.api.selectFile();
     if (file) {
@@ -59,7 +149,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 3. Probar Conexión con Ruta
+  // 4. Probar Conexión con Ruta
   async function testDirectory(dir) {
     if (!dir) {
       dirFeedback.className = "field-feedback error";
@@ -67,7 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     dirFeedback.className = "field-feedback info";
-    dirFeedback.textContent = "Verificando conectividad...";
+    dirFeedback.textContent = "Verificando conectividad con la red...";
     const res = await window.api.testDirectory(dir);
     if (res.ok) {
       dirFeedback.className = "field-feedback success";
@@ -82,7 +172,7 @@ document.addEventListener("DOMContentLoaded", () => {
     testDirectory(workDirInput.value.trim());
   });
 
-  // 4. Iniciar Análisis
+  // 5. Iniciar Análisis Masivo Acelerado
   btnStart.addEventListener("click", async () => {
     const workDir = workDirInput.value.trim();
     const coverPath = coverPathInput.value.trim();
@@ -106,7 +196,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnCancel.style.display = "inline-flex";
     progressSection.style.display = "block";
     progressBarFill.style.width = "0%";
-    progressStatusText.textContent = "Iniciando proceso en lote...";
+    progressStatusText.textContent = `Iniciando con ${activeWorkers} workers paralelos al ${resourceSlider.value}%...`;
     systemStatus.textContent = "Analizando...";
     systemStatus.style.color = "var(--primary)";
 
@@ -114,7 +204,9 @@ document.addEventListener("DOMContentLoaded", () => {
       workDir,
       coverPath,
       recursive: chkRecursive.checked,
-      maxPages: parseInt(selectPages.value, 10)
+      maxPages: parseInt(selectPages.value, 10),
+      workers: activeWorkers,
+      useGpu: chkGpuAccel.checked
     });
 
     if (!res.ok) {
@@ -123,7 +215,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 5. Cancelar Análisis
+  // 6. Cancelar Análisis
   btnCancel.addEventListener("click", async () => {
     if (confirm("¿Desea cancelar el análisis en curso?")) {
       await window.api.cancelAnalysis();
@@ -140,13 +232,13 @@ document.addEventListener("DOMContentLoaded", () => {
     systemStatus.style.color = "var(--success)";
   }
 
-  // 6. Escucha de Eventos Backend
+  // 7. Escucha de Eventos Backend
   window.api.onStatus((msg) => {
     progressStatusText.textContent = msg;
   });
 
   window.api.onCoverReady((data) => {
-    progressStatusText.textContent = `Carátula lista (${data.keypoints} rasgos extraídos). Analizando lote...`;
+    progressStatusText.textContent = `Carátula lista (${data.keypoints} rasgos extraídos). Procesando con ${activeWorkers} workers...`;
   });
 
   window.api.onProgress((data) => {
@@ -173,7 +265,7 @@ document.addEventListener("DOMContentLoaded", () => {
     resetUI();
   });
 
-  // 7. Actualización de Estadísticas
+  // 8. Actualización de Estadísticas
   function updateStats() {
     const total = currentResults.length;
     const sin = currentResults.filter(r => !r.has_cover && !r.error).length;
@@ -191,19 +283,17 @@ document.addEventListener("DOMContentLoaded", () => {
     tabCountErr.textContent = err;
   }
 
-  // 8. Renderizado de Filas y Tabla
+  // 9. Renderizado de Filas y Tabla
   function renderTable() {
     tableBody.innerHTML = "";
     const term = searchInput.value.toLowerCase().trim();
 
     const filtered = currentResults.filter(item => {
-      // Filtro por pestaña
       let matchTab = true;
       if (currentFilter === "sin_caratula") matchTab = (!item.has_cover && !item.error);
       else if (currentFilter === "con_caratula") matchTab = (item.has_cover && !item.error);
       else if (currentFilter === "error") matchTab = Boolean(item.error);
 
-      // Filtro por búsqueda
       const matchSearch = term === "" || item.filename.toLowerCase().includes(term);
       return matchTab && matchSearch;
     });
@@ -217,11 +307,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function appendTableRow(item) {
-    // Si la tabla estaba vacía, limpiar mensaje
     const empty = tableBody.querySelector(".empty-row");
     if (empty) empty.remove();
 
-    // Comprobar si cumple con filtro actual
     const term = searchInput.value.toLowerCase().trim();
     if (currentFilter === "sin_caratula" && (item.has_cover || item.error)) return;
     if (currentFilter === "con_caratula" && (!item.has_cover || item.error)) return;
@@ -267,7 +355,6 @@ document.addEventListener("DOMContentLoaded", () => {
       </td>
     `;
 
-    // Asignar eventos directos a los botones de atajo
     tr.querySelector(".btn-open-pdf").addEventListener("click", () => {
       window.api.openFile(item.path);
     });
@@ -286,7 +373,7 @@ document.addEventListener("DOMContentLoaded", () => {
     tableBody.appendChild(tr);
   }
 
-  // 9. Filtros por Pestañas
+  // 10. Filtros por Pestañas
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -296,7 +383,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Filtros desde las tarjetas superiores de estadísticas
   document.querySelectorAll(".stat-card").forEach(card => {
     card.addEventListener("click", () => {
       const f = card.dataset.filter;
@@ -305,12 +391,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Búsqueda en vivo
   searchInput.addEventListener("input", () => {
     renderTable();
   });
 
-  // 10. Exportar a CSV
+  // 11. Exportar a CSV
   btnExportCsv.addEventListener("click", () => {
     if (currentResults.length === 0) {
       alert("No hay resultados para exportar.");

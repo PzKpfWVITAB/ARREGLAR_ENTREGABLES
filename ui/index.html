@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verificador de Carátulas PDF</title>
+  <title>Verificador de Carátulas PDF - Alto Rendimiento</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -14,18 +14,84 @@
         <div class="logo-icon">📄</div>
         <div>
           <h1>Verificador de Carátulas en PDFs</h1>
-          <p class="subtitle">Auditoría visual de documentos en red mediante Visión Artificial</p>
+          <p class="subtitle">Auditoría visual masiva acelerada por GPU y multiprocesamiento al 90%</p>
         </div>
       </div>
       <div class="header-badges">
-        <span class="badge-mode">⚡ 100% Local (OpenCV + PyMuPDF)</span>
+        <span class="badge-hw" id="badgeGpuInfo">🔍 Detectando GPU...</span>
+        <span class="badge-mode" id="badgeWorkersInfo">⚡ CPU: 90%</span>
         <span class="badge-status" id="systemStatus">Listo</span>
       </div>
     </header>
 
-    <!-- Panel de Configuración -->
+    <!-- Panel de Configuración de Hardware y Recursos (90%) -->
+    <section class="card hw-card">
+      <div class="card-header-toggle">
+        <div class="card-title">⚙️ Optimización de Hardware (Asignación Automática al 90%)</div>
+        <button class="btn btn-outline btn-sm" id="btnRefreshHw">🔄 Re-detectar Hardware</button>
+      </div>
+
+      <div class="hw-grid">
+        <!-- CPU Card -->
+        <div class="hw-item">
+          <div class="hw-item-header">
+            <span class="hw-icon">🖥️</span>
+            <div>
+              <div class="hw-label">Procesador (CPU)</div>
+              <div class="hw-val" id="hwCpuVal">Cargando...</div>
+            </div>
+          </div>
+          <div class="hw-subtext" id="hwCpuSub">Calculando hilos al 90%...</div>
+        </div>
+
+        <!-- RAM Card -->
+        <div class="hw-item">
+          <div class="hw-item-header">
+            <span class="hw-icon">🧠</span>
+            <div>
+              <div class="hw-label">Memoria RAM</div>
+              <div class="hw-val" id="hwRamVal">Cargando...</div>
+            </div>
+          </div>
+          <div class="hw-subtext" id="hwRamSub">Límite al 90% reservado</div>
+        </div>
+
+        <!-- GPU Card -->
+        <div class="hw-item highlight" id="hwGpuContainer">
+          <div class="hw-item-header">
+            <span class="hw-icon" id="hwGpuIcon">🎮</span>
+            <div>
+              <div class="hw-label">Tarjeta Gráfica (GPU)</div>
+              <div class="hw-val" id="hwGpuVal">Detectando tarjeta...</div>
+            </div>
+          </div>
+          <div class="hw-subtext" id="hwGpuSub">Verificando aceleración por hardware...</div>
+        </div>
+      </div>
+
+      <!-- Ajustes de Asignación de Recursos -->
+      <div class="hw-controls-row">
+        <div class="slider-control">
+          <label for="resourceSlider">
+            Porcentaje de Uso de CPU y Recursos: 
+            <strong id="sliderValDisplay">90%</strong> 
+            (<span id="workersCountDisplay">14</span> workers paralelos)
+          </label>
+          <input type="range" id="resourceSlider" min="50" max="100" value="90" step="5" />
+        </div>
+
+        <div class="hw-toggles">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chkGpuAccel" checked />
+            <span id="gpuAccelLabel">Usar Aceleración por GPU (NVIDIA / OpenCL)</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel de Configuración del Lote de Trabajo -->
     <section class="card config-card">
-      <div class="card-title">Configuración del Lote de Trabajo</div>
+      <div class="card-title">📁 Configuración del Lote de Archivos</div>
       
       <div class="form-grid">
         <!-- Directorio de Red -->
@@ -69,10 +135,10 @@
 
       <!-- Botonera de Acción -->
       <div class="card-actions">
-        <button class="btn btn-primary" id="btnStart">
-          <span class="btn-icon">🚀</span> Iniciar Análisis de Carátulas
+        <button class="btn btn-primary btn-lg" id="btnStart">
+          <span class="btn-icon">🚀</span> Iniciar Análisis Masivo
         </button>
-        <button class="btn btn-danger" id="btnCancel" style="display: none;">
+        <button class="btn btn-danger btn-lg" id="btnCancel" style="display: none;">
           <span class="btn-icon">⏹</span> Cancelar Proceso
         </button>
       </div>
@@ -81,7 +147,7 @@
     <!-- Barra de Progreso Dinámica -->
     <section class="card progress-card" id="progressSection" style="display: none;">
       <div class="progress-header">
-        <span class="progress-title" id="progressStatusText">Procesando documentos...</span>
+        <span class="progress-title" id="progressStatusText">Procesando documentos con paralelización activa...</span>
         <span class="progress-count" id="progressCountText">0 / 0 (0%)</span>
       </div>
       <div class="progress-bar-container">
@@ -140,7 +206,7 @@
           </thead>
           <tbody id="tableBody">
             <tr class="empty-row">
-              <td colspan="6">Seleccione el directorio y la carátula para comenzar el análisis.</td>
+              <td colspan="6">Seleccione el directorio y la carátula para comenzar el análisis acelerado.</td>
             </tr>
           </tbody>
         </table>

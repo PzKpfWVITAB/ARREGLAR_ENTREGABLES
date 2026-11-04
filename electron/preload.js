@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
   selectDirectory: () => ipcRenderer.invoke("dialog:select-directory"),
   selectFile: () => ipcRenderer.invoke("dialog:select-file"),
   testDirectory: (path) => ipcRenderer.invoke("backend:test-directory", path),
+  getHardwareInfo: () => ipcRenderer.invoke("backend:get-hw-info"),
   startAnalysis: (params) => ipcRenderer.invoke("backend:start-analysis", params),
   cancelAnalysis: () => ipcRenderer.invoke("backend:cancel-analysis"),
   
