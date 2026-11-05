@@ -1,10 +1,9 @@
-"""Aplicación de Escritorio Nativa para Windows (Tkinter / ttk) - Verificador de Carátulas PDF."""
+"""Suite de Herramientas para Procesamiento de Documentos PDF en Red - Interfaz Nativa de Windows (Tkinter / ttk)."""
 import os
 import sys
 import csv
 import queue
 import threading
-import subprocess
 import concurrent.futures
 from pathlib import Path
 from datetime import datetime
@@ -23,152 +22,357 @@ from src.hardware_detector import HardwareDetector
 from src.report_generator import ReportGenerator
 
 
-class CoverCheckerWinApp:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Verificador de Carátulas en PDFs - Windows Forms (Alto Rendimiento)")
-        self.root.geometry("1220x820")
-        self.root.minsize(980, 680)
-
-        # Estado de la aplicación
+class GlobalResourcePanel(ttk.LabelFrame):
+    """
+    Panel superior compartido por todas las herramientas de la aplicación.
+    Detecta automáticamente CPU, RAM y GPU (NVIDIA / OpenCL) y ofrece sliders
+    independientes para cada recurso configurados por defecto al 90%.
+    """
+    def __init__(self, parent, **kwargs):
+        super().__init__(
+            parent,
+            text=" ⚙️ Configuración Global de Recursos del Equipo (Compartido por todas las herramientas - Auto 90%) ",
+            style="Section.TLabelframe",
+            padding=10,
+            **kwargs
+        )
         self.hw_info = None
+
+        # Variables de los Sliders (por defecto al 90%)
+        self.var_cpu_pct = tk.IntVar(value=90)
+        self.var_ram_pct = tk.IntVar(value=90)
+        self.var_gpu_pct = tk.IntVar(value=90)
+        self.var_use_gpu = tk.BooleanVar(value=True)
+
+        # Valores calculados
         self.active_workers = 4
+        self.ram_limit_gb = 4.0
+        self.gpu_limit_gb = 0.0
+
+        self._build_ui()
+        self.detect_hardware()
+
+    def _build_ui(self):
+        grid_frame = ttk.Frame(self)
+        grid_frame.pack(fill=tk.X)
+        grid_frame.columnconfigure(0, weight=1)
+        grid_frame.columnconfigure(1, weight=1)
+        grid_frame.columnconfigure(2, weight=1)
+
+        # --- COLUMNA 1: PROCESADOR (CPU) ---
+        cpu_card = ttk.Frame(grid_frame, padding=6, relief=tk.GROOVE, borderwidth=1)
+        cpu_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        cpu_top = ttk.Frame(cpu_card)
+        cpu_top.pack(fill=tk.X)
+        ttk.Label(cpu_top, text="🖥️ Procesador (CPU)", style="Bold.TLabel").pack(side=tk.LEFT)
+        self.lbl_cpu_hw = ttk.Label(cpu_top, text="Detectando...", style="Subtitle.TLabel")
+        self.lbl_cpu_hw.pack(side=tk.RIGHT)
+
+        self.lbl_cpu_alloc = ttk.Label(cpu_card, text="Uso: 90% (Calculando hilos...)", style="Accent.TLabel")
+        self.lbl_cpu_alloc.pack(anchor=tk.W, pady=(4, 2))
+
+        self.scale_cpu = ttk.Scale(
+            cpu_card, from_=10, to=100, orient=tk.HORIZONTAL,
+            command=self._on_cpu_slider
+        )
+        self.scale_cpu.pack(fill=tk.X, pady=(2, 0))
+
+        # --- COLUMNA 2: MEMORIA RAM ---
+        ram_card = ttk.Frame(grid_frame, padding=6, relief=tk.GROOVE, borderwidth=1)
+        ram_card.grid(row=0, column=1, sticky="nsew", padx=3)
+
+        ram_top = ttk.Frame(ram_card)
+        ram_top.pack(fill=tk.X)
+        ttk.Label(ram_top, text="🧠 Memoria RAM", style="Bold.TLabel").pack(side=tk.LEFT)
+        self.lbl_ram_hw = ttk.Label(ram_top, text="Detectando...", style="Subtitle.TLabel")
+        self.lbl_ram_hw.pack(side=tk.RIGHT)
+
+        self.lbl_ram_alloc = ttk.Label(ram_card, text="Uso: 90% (Calculando GB...)", style="Accent.TLabel")
+        self.lbl_ram_alloc.pack(anchor=tk.W, pady=(4, 2))
+
+        self.scale_ram = ttk.Scale(
+            ram_card, from_=10, to=100, orient=tk.HORIZONTAL,
+            command=self._on_ram_slider
+        )
+        self.scale_ram.pack(fill=tk.X, pady=(2, 0))
+
+        # --- COLUMNA 3: TARJETA GRÁFICA (GPU NVIDIA / OPENCL) ---
+        gpu_card = ttk.Frame(grid_frame, padding=6, relief=tk.GROOVE, borderwidth=1)
+        gpu_card.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
+
+        gpu_top = ttk.Frame(gpu_card)
+        gpu_top.pack(fill=tk.X)
+        ttk.Label(gpu_top, text="🎮 Tarjeta Gráfica (GPU)", style="Bold.TLabel").pack(side=tk.LEFT)
+        self.lbl_gpu_hw = ttk.Label(gpu_top, text="Detectando...", style="Nvidia.TLabel")
+        self.lbl_gpu_hw.pack(side=tk.RIGHT)
+
+        self.lbl_gpu_alloc = ttk.Label(gpu_card, text="Uso: 90% | Aceleración Activa", style="Accent.TLabel")
+        self.lbl_gpu_alloc.pack(anchor=tk.W, pady=(4, 2))
+
+        gpu_ctrl_row = ttk.Frame(gpu_card)
+        gpu_ctrl_row.pack(fill=tk.X, pady=(2, 0))
+
+        self.chk_gpu = ttk.Checkbutton(
+            gpu_ctrl_row, text="Usar GPU", variable=self.var_use_gpu,
+            command=self._update_gpu_labels
+        )
+        self.chk_gpu.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.scale_gpu = ttk.Scale(
+            gpu_ctrl_row, from_=10, to=100, orient=tk.HORIZONTAL,
+            command=self._on_gpu_slider
+        )
+        self.scale_gpu.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Barra inferior del panel de recursos
+        bottom_bar = ttk.Frame(self)
+        bottom_bar.pack(fill=tk.X, pady=(8, 0))
+        self.lbl_summary = ttk.Label(
+            bottom_bar,
+            text="Perfil de alto rendimiento activo (90% de recursos asignados por defecto).",
+            style="Subtitle.TLabel"
+        )
+        self.lbl_summary.pack(side=tk.LEFT)
+
+        ttk.Button(bottom_bar, text="🔄 Re-detectar Hardware", command=self.detect_hardware).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(bottom_bar, text="⚡ Restablecer al 90%", command=self.reset_to_90).pack(side=tk.RIGHT)
+
+        # Inicializar sliders al 90% una vez que todas las etiquetas existen
+        self.scale_cpu.set(90)
+        self.scale_ram.set(90)
+        self.scale_gpu.set(90)
+
+    def reset_to_90(self):
+        self.scale_cpu.set(90)
+        self.scale_ram.set(90)
+        self.scale_gpu.set(90)
+        self.var_use_gpu.set(True)
+        self._update_all_calculations()
+
+    def detect_hardware(self):
+        try:
+            self.hw_info = HardwareDetector.detect()
+            cpu = self.hw_info["cpu"]
+            ram = self.hw_info["ram"]
+            gpu = self.hw_info["gpu"]
+
+            self.lbl_cpu_hw.configure(text=f"{cpu['logical_cores']} Hilos ({cpu['physical_cores']} Físicos)")
+            self.lbl_ram_hw.configure(text=f"{ram['total_gb']} GB Total ({ram['available_gb']} GB Libres)")
+
+            prim_gpu = gpu["primary"]
+            gpu_name = prim_gpu.get("name", "Integrada")
+            vram_gb = prim_gpu.get("vram_gb", 0)
+            vram_str = f" ({vram_gb} GB)" if vram_gb else ""
+
+            if gpu["has_nvidia"]:
+                self.lbl_gpu_hw.configure(text=f"NVIDIA: {gpu_name}{vram_str}", style="Nvidia.TLabel")
+            elif gpu["opencl_acceleration"]:
+                self.lbl_gpu_hw.configure(text=f"{gpu_name}{vram_str} (OpenCL)", style="Success.TLabel")
+            else:
+                self.lbl_gpu_hw.configure(text=f"{gpu_name}", style="Subtitle.TLabel")
+
+            self._update_all_calculations()
+        except Exception as e:
+            self.lbl_summary.configure(text=f"Error al detectar hardware: {e}")
+
+    def _on_cpu_slider(self, val):
+        self.var_cpu_pct.set(int(float(val)))
+        self._update_cpu_labels()
+
+    def _on_ram_slider(self, val):
+        self.var_ram_pct.set(int(float(val)))
+        self._update_ram_labels()
+
+    def _on_gpu_slider(self, val):
+        self.var_gpu_pct.set(int(float(val)))
+        self._update_gpu_labels()
+
+    def _update_cpu_labels(self):
+        pct = self.var_cpu_pct.get()
+        logical = self.hw_info["cpu"]["logical_cores"] if self.hw_info else (os.cpu_count() or 4)
+        self.active_workers = max(1, int(round(logical * (pct / 100.0))))
+        self.lbl_cpu_alloc.configure(text=f"Asignado: {pct}%  →  {self.active_workers} de {logical} hilos (Workers)")
+        self._update_summary_bar()
+
+    def _update_ram_labels(self):
+        pct = self.var_ram_pct.get()
+        total_ram = self.hw_info["ram"]["total_gb"] if self.hw_info else 8.0
+        self.ram_limit_gb = round(total_ram * (pct / 100.0), 2)
+        self.lbl_ram_alloc.configure(text=f"Asignado: {pct}%  →  {self.ram_limit_gb} GB de {total_ram} GB")
+        self._update_summary_bar()
+
+    def _update_gpu_labels(self):
+        pct = self.var_gpu_pct.get()
+        use_gpu = self.var_use_gpu.get()
+        gpu_info = self.hw_info["gpu"] if self.hw_info else {}
+        vram_total = gpu_info.get("primary", {}).get("vram_gb", 0) or 0
+        has_nvidia = gpu_info.get("has_nvidia", False)
+        has_ocl = gpu_info.get("opencl_acceleration", False)
+
+        if not use_gpu:
+            self.lbl_gpu_alloc.configure(text="GPU Desactivada (Se usará solo CPU)")
+        elif has_nvidia:
+            self.gpu_limit_gb = round(vram_total * (pct / 100.0), 2) if vram_total else 0
+            vram_alloc_txt = f" ({self.gpu_limit_gb} GB VRAM)" if vram_total else ""
+            self.lbl_gpu_alloc.configure(text=f"Asignado: {pct}%{vram_alloc_txt} | NVIDIA CUDA Activo")
+        elif has_ocl:
+            self.gpu_limit_gb = round(vram_total * (pct / 100.0), 2) if vram_total else 0
+            vram_alloc_txt = f" ({self.gpu_limit_gb} GB VRAM)" if vram_total else ""
+            self.lbl_gpu_alloc.configure(text=f"Asignado: {pct}%{vram_alloc_txt} | OpenCL Activo")
+        else:
+            self.lbl_gpu_alloc.configure(text=f"Asignado: {pct}% (Sin GPU dedicada detectada)")
+        self._update_summary_bar()
+
+    def _update_all_calculations(self):
+        self._update_cpu_labels()
+        self._update_ram_labels()
+        self._update_gpu_labels()
+
+    def _update_summary_bar(self):
+        gpu_txt = "GPU Activa" if self.var_use_gpu.get() else "Solo CPU"
+        self.lbl_summary.configure(
+            text=f"Recursos listos para las herramientas: CPU al {self.var_cpu_pct.get()}% ({self.active_workers} workers) | "
+                 f"RAM al {self.var_ram_pct.get()}% ({self.ram_limit_gb} GB) | "
+                 f"GPU al {self.var_gpu_pct.get()}% ({gpu_txt})"
+        )
+
+    def get_config(self) -> dict:
+        """Devuelve la configuración actual de recursos para que la utilice cualquier herramienta."""
+        return {
+            "cpu_pct": self.var_cpu_pct.get(),
+            "workers": self.active_workers,
+            "ram_pct": self.var_ram_pct.get(),
+            "ram_limit_gb": self.ram_limit_gb,
+            "gpu_pct": self.var_gpu_pct.get(),
+            "use_gpu": self.var_use_gpu.get(),
+            "has_nvidia": bool(self.hw_info and self.hw_info["gpu"]["has_nvidia"])
+        }
+
+
+class ToolsMenuView(ttk.Frame):
+    """
+    Formulario inicial con el catálogo de herramientas disponibles.
+    Permite seleccionar qué herramienta ejecutar usando los recursos configurados arriba.
+    """
+    def __init__(self, parent, on_open_tool):
+        super().__init__(parent)
+        self.on_open_tool = on_open_tool
+        self._build_ui()
+
+    def _build_ui(self):
+        intro_frame = ttk.Frame(self, padding=(4, 10))
+        intro_frame.pack(fill=tk.X)
+
+        ttk.Label(
+            intro_frame,
+            text="Seleccione la herramienta que desea utilizar:",
+            style="Subheader.TLabel"
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            intro_frame,
+            text="Todas las herramientas de esta suite utilizan automáticamente la configuración de CPU, RAM y GPU definida en el panel superior.",
+            style="Subtitle.TLabel"
+        ).pack(anchor=tk.W, pady=(2, 10))
+
+        # Contenedor de tarjetas de herramientas
+        cards_container = ttk.Frame(self)
+        cards_container.pack(fill=tk.BOTH, expand=True)
+        cards_container.columnconfigure(0, weight=1)
+
+        # --- HERRAMIENTA 1: VERIFICADOR DE CARÁTULAS (ÚNICA ACTIVA POR AHORA) ---
+        tool1_card = ttk.LabelFrame(
+            cards_container,
+            text=" Herramienta #1 — Auditoría Visual de Documentos ",
+            style="Section.TLabelframe",
+            padding=16
+        )
+        tool1_card.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+
+        info_col = ttk.Frame(tool1_card)
+        info_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 16))
+
+        ttk.Label(
+            info_col,
+            text="🔍 Identificador de PDFs sin Carátula en Red",
+            font=("Segoe UI", 12, "bold"),
+            foreground="#003366"
+        ).pack(anchor=tk.W)
+
+        ttk.Label(
+            info_col,
+            text=(
+                "Analiza lotes masivos de archivos PDF en carpetas de red (UNC / SMB) comparándolos contra un PDF de carátula de referencia.\n"
+                "• Visión Artificial 100% Local (OpenCV ORB + Homografía RANSAC + PyMuPDF).\n"
+                "• Clasifica automáticamente qué documentos SÍ tienen carátula, cuáles NO y cuáles están corruptos.\n"
+                "• Incluye atajos directos para abrir cada PDF o resaltarlo en el Explorador de Windows."
+            ),
+            font=("Segoe UI", 9),
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, pady=(6, 0))
+
+        action_col = ttk.Frame(tool1_card)
+        action_col.pack(side=tk.RIGHT, anchor=tk.CENTER)
+
+        ttk.Label(action_col, text="Estado: Disponible", style="Success.TLabel").pack(pady=(0, 8))
+        ttk.Button(
+            action_col,
+            text="▶ Abrir Herramienta",
+            style="Primary.TButton",
+            command=lambda: self.on_open_tool("cover_checker")
+        ).pack()
+
+
+class CoverCheckerToolView(ttk.Frame):
+    """
+    Vista de la Herramienta #1: Identificador de PDFs sin Carátula.
+    Consume en tiempo real los sliders de recursos del GlobalResourcePanel.
+    """
+    def __init__(self, parent, resource_panel: GlobalResourcePanel, on_back):
+        super().__init__(parent)
+        self.resource_panel = resource_panel
+        self.on_back = on_back
+
         self.is_running = False
         self.cancel_requested = False
         self.results = []
         self.current_filter = "all"
         self.msg_queue = queue.Queue()
 
-        # Variables de Tkinter
+        # Variables del formulario
         self.var_work_dir = tk.StringVar()
         self.var_cover_pdf = tk.StringVar()
         self.var_recursive = tk.BooleanVar(value=True)
         self.var_max_pages = tk.StringVar(value="2")
-        self.var_resource_pct = tk.IntVar(value=90)
-        self.var_use_gpu = tk.BooleanVar(value=True)
         self.var_search = tk.StringVar()
-        self.var_dir_status = tk.StringVar(value="Seleccione o pegue una ruta de red (ej. \\\\servidor\\carpeta)")
-        self.var_progress_text = tk.StringVar(value="Listo para iniciar.")
+        self.var_dir_status = tk.StringVar(value="Seleccione o pegue una dirección de red (ej. \\\\servidor\\carpeta)")
+        self.var_progress_text = tk.StringVar(value="Listo para iniciar análisis.")
         self.var_progress_count = tk.StringVar(value="0 / 0 (0%)")
 
-        # Configurar estilo visual nativo de Windows
-        self._setup_styles()
         self._build_ui()
-
-        # Detectar hardware al arrancar
-        self.root.after(100, self.detect_hardware)
-        # Bucle de lectura de cola para actualizar la interfaz sin congelarla
-        self.root.after(100, self._process_queue)
-
-    def _setup_styles(self):
-        style = ttk.Style(self.root)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        elif "xpnative" in style.theme_names():
-            style.theme_use("xpnative")
-        else:
-            style.theme_use("clam")
-
-        style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
-        style.configure("Subtitle.TLabel", font=("Segoe UI", 9), foreground="#555555")
-        style.configure("Section.TLabelframe.Label", font=("Segoe UI", 10, "bold"), foreground="#003366")
-        style.configure("Bold.TLabel", font=("Segoe UI", 9, "bold"))
-        style.configure("Success.TLabel", font=("Segoe UI", 9, "bold"), foreground="#107c10")
-        style.configure("Danger.TLabel", font=("Segoe UI", 9, "bold"), foreground="#c50f1f")
-        style.configure("Nvidia.TLabel", font=("Segoe UI", 9, "bold"), foreground="#2b7a0b")
-        style.configure("StatNum.TLabel", font=("Segoe UI", 18, "bold"))
-        style.configure("StatTitle.TLabel", font=("Segoe UI", 9), foreground="#444444")
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 6))
-        style.configure("Action.TButton", font=("Segoe UI", 9), padding=(8, 4))
-        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26)
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+        self.after(100, self._process_queue)
 
     def _build_ui(self):
-        main_frame = ttk.Frame(self.root, padding=12)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Barra de navegación de la herramienta
+        nav_bar = ttk.Frame(self)
+        nav_bar.pack(fill=tk.X, pady=(0, 8))
 
-        # 1. Encabezado
-        header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 8))
-
-        title_box = ttk.Frame(header_frame)
-        title_box.pack(side=tk.LEFT)
-        ttk.Label(title_box, text="Verificador de Carátulas en Documentos PDF", style="Title.TLabel").pack(anchor=tk.W)
+        ttk.Button(nav_bar, text="⬅ Volver al Menú de Herramientas", command=self._handle_back).pack(side=tk.LEFT)
         ttk.Label(
-            title_box,
-            text="Modo 100% Local (OpenCV + PyMuPDF) | Optimizado para carpetas de red y multiprocesamiento al 90%",
-            style="Subtitle.TLabel"
-        ).pack(anchor=tk.W)
+            nav_bar,
+            text="Herramienta Activa: Identificador de PDFs sin Carátula",
+            style="Subheader.TLabel"
+        ).pack(side=tk.LEFT, padx=14)
 
-        self.lbl_top_badge = ttk.Label(header_frame, text="Detectando hardware...", style="Bold.TLabel")
-        self.lbl_top_badge.pack(side=tk.RIGHT, padx=8)
-
-        # 2. Sección de Configuración de Hardware y Recursos (90%)
-        hw_frame = ttk.LabelFrame(main_frame, text=" Configuración de Hardware y Recursos del Equipo (Auto 90%) ", style="Section.TLabelframe", padding=10)
-        hw_frame.pack(fill=tk.X, pady=(0, 8))
-
-        hw_info_row = ttk.Frame(hw_frame)
-        hw_info_row.pack(fill=tk.X, pady=(0, 8))
-        hw_info_row.columnconfigure(0, weight=1)
-        hw_info_row.columnconfigure(1, weight=1)
-        hw_info_row.columnconfigure(2, weight=1)
-
-        # CPU Box
-        cpu_box = ttk.Frame(hw_info_row)
-        cpu_box.grid(row=0, column=0, sticky="w", padx=4)
-        ttk.Label(cpu_box, text="Procesador (CPU):", style="Bold.TLabel").pack(anchor=tk.W)
-        self.lbl_cpu_val = ttk.Label(cpu_box, text="Detectando núcleos...")
-        self.lbl_cpu_val.pack(anchor=tk.W)
-
-        # RAM Box
-        ram_box = ttk.Frame(hw_info_row)
-        ram_box.grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Label(ram_box, text="Memoria RAM:", style="Bold.TLabel").pack(anchor=tk.W)
-        self.lbl_ram_val = ttk.Label(ram_box, text="Detectando memoria...")
-        self.lbl_ram_val.pack(anchor=tk.W)
-
-        # GPU Box
-        gpu_box = ttk.Frame(hw_info_row)
-        gpu_box.grid(row=0, column=2, sticky="w", padx=4)
-        ttk.Label(gpu_box, text="Tarjeta Gráfica (GPU):", style="Bold.TLabel").pack(anchor=tk.W)
-        self.lbl_gpu_val = ttk.Label(gpu_box, text="Buscando GPU dedicada...", style="Bold.TLabel")
-        self.lbl_gpu_val.pack(anchor=tk.W)
-
-        ttk.Separator(hw_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
-
-        # Controles de porcentaje de recursos y GPU
-        hw_ctrl_row = ttk.Frame(hw_frame)
-        hw_ctrl_row.pack(fill=tk.X)
-
-        ttk.Label(hw_ctrl_row, text="Uso de CPU / RAM asignado:").pack(side=tk.LEFT, padx=(0, 6))
-        self.lbl_workers_calc = ttk.Label(hw_ctrl_row, text="90% (Calculando workers...)", style="Bold.TLabel")
-        self.scale_resources = ttk.Scale(
-            hw_ctrl_row, from_=50, to=100, orient=tk.HORIZONTAL, length=180,
-            command=self._on_slider_change
-        )
-        self.scale_resources.pack(side=tk.LEFT, padx=(0, 8))
-        self.lbl_workers_calc.pack(side=tk.LEFT, padx=(0, 20))
-        self.scale_resources.set(90)
-
-        self.chk_gpu = ttk.Checkbutton(
-            hw_ctrl_row,
-            text="Utilizar aceleración por GPU (NVIDIA CUDA / OpenCL si está disponible)",
-            variable=self.var_use_gpu
-        )
-        self.chk_gpu.pack(side=tk.LEFT, padx=(0, 12))
-
-        ttk.Button(hw_ctrl_row, text="Re-detectar Equipo", command=self.detect_hardware).pack(side=tk.RIGHT)
-
-        # 3. Sección de Selección de Directorio de Red y Carátula
-        cfg_frame = ttk.LabelFrame(main_frame, text=" Parámetros de Búsqueda y Archivos ", style="Section.TLabelframe", padding=10)
+        # Parámetros de Búsqueda y Archivos
+        cfg_frame = ttk.LabelFrame(self, text=" Parámetros de Carpeta de Red y Carátula Modelo ", style="Section.TLabelframe", padding=10)
         cfg_frame.pack(fill=tk.X, pady=(0, 8))
 
         # Fila Directorio de Red
         dir_row = ttk.Frame(cfg_frame)
         dir_row.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(dir_row, text="Directorio de Red / Carpeta:", width=24, anchor=tk.W, style="Bold.TLabel").pack(side=tk.LEFT)
-        self.entry_dir = ttk.Entry(dir_row, textvariable=self.var_work_dir)
-        self.entry_dir.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Entry(dir_row, textvariable=self.var_work_dir).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         ttk.Button(dir_row, text="Examinar Carpeta...", command=self.browse_directory).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(dir_row, text="Probar Conexión", command=self.test_network_dir).pack(side=tk.LEFT)
 
@@ -179,27 +383,25 @@ class CoverCheckerWinApp:
         cover_row = ttk.Frame(cfg_frame)
         cover_row.pack(fill=tk.X, pady=(0, 8))
         ttk.Label(cover_row, text="PDF Carátula de Referencia:", width=24, anchor=tk.W, style="Bold.TLabel").pack(side=tk.LEFT)
-        self.entry_cover = ttk.Entry(cover_row, textvariable=self.var_cover_pdf)
-        self.entry_cover.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Entry(cover_row, textvariable=self.var_cover_pdf).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
         ttk.Button(cover_row, text="Seleccionar PDF...", command=self.browse_cover_pdf).pack(side=tk.LEFT)
 
-        # Fila de opciones y botones de inicio
+        # Fila Opciones y Ejecución
         opt_row = ttk.Frame(cfg_frame)
         opt_row.pack(fill=tk.X, pady=(4, 0))
 
         ttk.Checkbutton(opt_row, text="Incluir subcarpetas recursivamente", variable=self.var_recursive).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Label(opt_row, text="Páginas iniciales a revisar por PDF:").pack(side=tk.LEFT, padx=(0, 6))
-        cmb_pages = ttk.Combobox(opt_row, textvariable=self.var_max_pages, values=["1", "2", "3", "4"], width=5, state="readonly")
-        cmb_pages.pack(side=tk.LEFT)
+        ttk.Combobox(opt_row, textvariable=self.var_max_pages, values=["1", "2", "3", "4"], width=5, state="readonly").pack(side=tk.LEFT)
 
-        self.btn_cancel = ttk.Button(opt_row, text="Detener Proceso", command=self.cancel_analysis, state=tk.DISABLED)
+        self.btn_cancel = ttk.Button(opt_row, text="⏹ Detener Proceso", command=self.cancel_analysis, state=tk.DISABLED)
         self.btn_cancel.pack(side=tk.RIGHT, padx=(6, 0))
 
-        self.btn_start = ttk.Button(opt_row, text="Iniciar Verificación de Carátulas", style="Primary.TButton", command=self.start_analysis)
+        self.btn_start = ttk.Button(opt_row, text="🚀 Iniciar Verificación de Carátulas", style="Primary.TButton", command=self.start_analysis)
         self.btn_start.pack(side=tk.RIGHT)
 
-        # 4. Barra de progreso
-        prog_frame = ttk.Frame(main_frame)
+        # Barra de Progreso
+        prog_frame = ttk.Frame(self)
         prog_frame.pack(fill=tk.X, pady=(0, 8))
 
         prog_labels = ttk.Frame(prog_frame)
@@ -210,8 +412,8 @@ class CoverCheckerWinApp:
         self.progress_bar = ttk.Progressbar(prog_frame, orient=tk.HORIZONTAL, mode="determinate", maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=(4, 0))
 
-        # 5. Contadores Rápidos y Barra de Filtros
-        stats_frame = ttk.Frame(main_frame)
+        # Contadores Rápidos y Filtros
+        stats_frame = ttk.Frame(self)
         stats_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.btn_filter_all = ttk.Button(stats_frame, text="Todos (0)", command=lambda: self.set_filter("all"))
@@ -226,17 +428,16 @@ class CoverCheckerWinApp:
         self.btn_filter_err = ttk.Button(stats_frame, text="⚠️ Errores / Dañados (0)", command=lambda: self.set_filter("error"))
         self.btn_filter_err.pack(side=tk.LEFT, padx=(0, 16))
 
-        # Buscador a la derecha
         ttk.Button(stats_frame, text="Exportar CSV", command=self.export_csv).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(stats_frame, text="Abrir Reporte HTML", command=self.export_and_open_html).pack(side=tk.RIGHT, padx=(6, 0))
 
-        search_entry = ttk.Entry(stats_frame, textvariable=self.var_search, width=28)
+        search_entry = ttk.Entry(stats_frame, textvariable=self.var_search, width=26)
         search_entry.pack(side=tk.RIGHT, padx=(4, 0))
         ttk.Label(stats_frame, text="Buscar archivo:").pack(side=tk.RIGHT)
         self.var_search.trace_add("write", lambda *_: self.refresh_table())
 
-        # 6. Tabla de Resultados (Treeview)
-        table_frame = ttk.Frame(main_frame)
+        # Tabla de Resultados
+        table_frame = ttk.Frame(self)
         table_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("idx", "status", "filename", "confidence", "details", "path")
@@ -256,7 +457,6 @@ class CoverCheckerWinApp:
         self.tree.column("details", width=180, anchor=tk.W, stretch=False)
         self.tree.column("path", width=420, anchor=tk.W)
 
-        # Colores por etiqueta
         self.tree.tag_configure("con_caratula", background="#e6f4ea", foreground="#0d652d")
         self.tree.tag_configure("sin_caratula", background="#fce8e6", foreground="#a50e0e")
         self.tree.tag_configure("error", background="#fef7e0", foreground="#b06000")
@@ -271,19 +471,17 @@ class CoverCheckerWinApp:
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
-        # Eventos de doble clic y clic derecho
         self.tree.bind("<Double-1>", lambda e: self.open_selected_pdf())
         self.tree.bind("<Button-3>", self._show_context_menu)
 
-        # Menú contextual (Clic derecho)
-        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu = tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="📄 Abrir PDF en visor predeterminado", command=self.open_selected_pdf)
         self.context_menu.add_command(label="📂 Mostrar archivo en el Explorador de Windows", command=self.show_selected_in_explorer)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="📋 Copiar ruta completa al portapapeles", command=self.copy_selected_path)
 
-        # 7. Barra inferior de Atajos Rápidos para el archivo seleccionado
-        shortcut_bar = ttk.LabelFrame(main_frame, text=" Atajos Rápidos para el Archivo Seleccionado (o Doble Clic / Clic Derecho en la tabla) ", padding=8)
+        # Barra inferior de Atajos Rápidos
+        shortcut_bar = ttk.LabelFrame(self, text=" Atajos Rápidos para el Archivo Seleccionado (o Doble Clic / Clic Derecho en la tabla) ", padding=8)
         shortcut_bar.pack(fill=tk.X, pady=(8, 0))
 
         ttk.Button(shortcut_bar, text="📄 Abrir PDF Seleccionado", style="Action.TButton", command=self.open_selected_pdf).pack(side=tk.LEFT, padx=(0, 8))
@@ -293,59 +491,13 @@ class CoverCheckerWinApp:
         self.lbl_shortcut_hint = ttk.Label(shortcut_bar, text="Tip: Haz doble clic sobre cualquier fila para abrir el PDF al instante.", style="Subtitle.TLabel")
         self.lbl_shortcut_hint.pack(side=tk.RIGHT)
 
-    # =========================================================================
-    # DETECCIÓN DE HARDWARE Y AJUSTE AL 90%
-    # =========================================================================
-    def detect_hardware(self):
-        try:
-            self.hw_info = HardwareDetector.detect()
-            cpu = self.hw_info["cpu"]
-            ram = self.hw_info["ram"]
-            gpu = self.hw_info["gpu"]
+    def _handle_back(self):
+        if self.is_running:
+            if not messagebox.askyesno("Proceso en curso", "Hay un análisis en ejecución. ¿Desea detenerlo y volver al menú?"):
+                return
+            self.cancel_requested = True
+        self.on_back()
 
-            self._update_workers_from_slider()
-
-            self.lbl_cpu_val.configure(
-                text=f"{cpu['logical_cores']} hilos lógicos ({cpu['physical_cores']} núcleos físicos)"
-            )
-            self.lbl_ram_val.configure(
-                text=f"{ram['total_gb']} GB Total ({ram['available_gb']} GB disponibles)"
-            )
-
-            prim_gpu = gpu["primary"]
-            gpu_name = prim_gpu.get("name", "Integrada")
-            vram_txt = f" ({prim_gpu['vram_gb']} GB VRAM)" if prim_gpu.get("vram_gb") else ""
-
-            if gpu["has_nvidia"]:
-                self.lbl_gpu_val.configure(text=f"NVIDIA: {gpu_name}{vram_txt} [Activa]", style="Nvidia.TLabel")
-                self.lbl_top_badge.configure(text=f"🎮 GPU NVIDIA Activa | ⚡ {self.active_workers} Workers (90%)", style="Nvidia.TLabel")
-            elif gpu["opencl_acceleration"]:
-                self.lbl_gpu_val.configure(text=f"{gpu_name}{vram_txt} [OpenCL Activo]", style="Success.TLabel")
-                self.lbl_top_badge.configure(text=f"⚡ GPU OpenCL Activo | {self.active_workers} Workers", style="Success.TLabel")
-            else:
-                self.lbl_gpu_val.configure(text=f"{gpu_name} (Modo CPU Multiproceso)", style="Bold.TLabel")
-                self.lbl_top_badge.configure(text=f"⚡ CPU Multiproceso: {self.active_workers} Workers", style="Bold.TLabel")
-
-        except Exception as e:
-            self.lbl_cpu_val.configure(text=f"Error al detectar: {e}")
-
-    def _on_slider_change(self, val):
-        pct = int(float(val))
-        self.var_resource_pct.set(pct)
-        self._update_workers_from_slider()
-
-    def _update_workers_from_slider(self):
-        pct = self.var_resource_pct.get()
-        logical_cores = self.hw_info["cpu"]["logical_cores"] if self.hw_info else (os.cpu_count() or 4)
-        total_ram = self.hw_info["ram"]["total_gb"] if self.hw_info else 8.0
-
-        self.active_workers = max(1, int(logical_cores * (pct / 100.0)))
-        ram_limit = round(total_ram * (pct / 100.0), 1)
-        self.lbl_workers_calc.configure(text=f"{pct}%  →  {self.active_workers} Workers en paralelo | Límite RAM: {ram_limit} GB")
-
-    # =========================================================================
-    # DIÁLOGOS Y PRUEBA DE RED
-    # =========================================================================
     def browse_directory(self):
         selected = filedialog.askdirectory(title="Seleccionar Directorio de Red o Carpeta de PDFs")
         if selected:
@@ -371,7 +523,7 @@ class CoverCheckerWinApp:
 
         dir_path = NetworkIOHandler.normalize_path(raw_dir)
         self.var_dir_status.set("Verificando conectividad con la ruta de red...")
-        self.root.update_idletasks()
+        self.update_idletasks()
 
         ok, msg = NetworkIOHandler.test_connectivity(dir_path)
         if ok:
@@ -382,9 +534,6 @@ class CoverCheckerWinApp:
             self.var_dir_status.set(f"❌ {msg}")
             self.lbl_dir_feedback.configure(foreground="#c50f1f")
 
-    # =========================================================================
-    # PROCESAMIENTO PARALELO EN SEGUNDO PLANO
-    # =========================================================================
     def start_analysis(self):
         if self.is_running:
             return
@@ -411,7 +560,12 @@ class CoverCheckerWinApp:
             messagebox.showerror("Carátula no encontrada", f"No existe el archivo de carátula:\n{cover_path}")
             return
 
-        # Reiniciar estado
+        # Obtener configuración actual de los sliders globales de recursos
+        res_cfg = self.resource_panel.get_config()
+        workers = res_cfg["workers"]
+        use_gpu = res_cfg["use_gpu"]
+        ram_limit = res_cfg["ram_limit_gb"]
+
         self.results.clear()
         self.refresh_table()
         self._update_counters()
@@ -421,13 +575,14 @@ class CoverCheckerWinApp:
         self.btn_start.configure(state=tk.DISABLED)
         self.btn_cancel.configure(state=tk.NORMAL)
         self.progress_bar["value"] = 0
-        self.var_progress_text.set("Preparando motor de visión artificial y carátula modelo...")
+        self.var_progress_text.set(
+            f"Iniciando con CPU al {res_cfg['cpu_pct']}% ({workers} workers), RAM máx {ram_limit} GB, "
+            f"GPU {'Activa (' + str(res_cfg['gpu_pct']) + '%)' if use_gpu else 'Inactiva'}..."
+        )
         self.var_progress_count.set("0 / 0 (0%)")
 
         max_pages = int(self.var_max_pages.get() or 2)
         recursive = self.var_recursive.get()
-        workers = self.active_workers
-        use_gpu = self.var_use_gpu.get()
 
         thread = threading.Thread(
             target=self._worker_thread,
@@ -561,11 +716,9 @@ class CoverCheckerWinApp:
         except queue.Empty:
             pass
         finally:
-            self.root.after(80, self._process_queue)
+            if self.winfo_exists():
+                self.after(80, self._process_queue)
 
-    # =========================================================================
-    # TABLA, FILTROS Y ATAJOS RÁPIDOS
-    # =========================================================================
     def _update_counters(self):
         total = len(self.results)
         sin_c = sum(1 for r in self.results if not r["has_cover"] and not r["error"])
@@ -648,8 +801,8 @@ class CoverCheckerWinApp:
     def copy_selected_path(self):
         p = self._get_selected_path()
         if p:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(str(p))
+            self.clipboard_clear()
+            self.clipboard_append(str(p))
             self.lbl_shortcut_hint.configure(text=f"✓ Ruta copiada: {p.name}")
 
     def _show_context_menu(self, event):
@@ -658,9 +811,6 @@ class CoverCheckerWinApp:
             self.tree.selection_set(row_id)
             self.context_menu.tk_popup(event.x_root, event.y_root)
 
-    # =========================================================================
-    # EXPORTACIÓN DE REPORTES (CSV Y HTML)
-    # =========================================================================
     def export_csv(self):
         if not self.results:
             messagebox.showinfo("Sin datos", "No hay resultados para exportar.")
@@ -707,9 +857,87 @@ class CoverCheckerWinApp:
             messagebox.showerror("Error al generar HTML", str(e))
 
 
+class SuiteMainWindow:
+    """
+    Ventana Maestra de la Suite:
+    Mantiene fijo en la parte superior el panel con los sliders de recursos (CPU, RAM, GPU al 90%)
+    y debajo intercambia entre el Menú de Herramientas y la herramienta seleccionada.
+    """
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Suite de Herramientas para Entregables PDF - Windows Forms")
+        self.root.geometry("1240x860")
+        self.root.minsize(1000, 720)
+
+        self._setup_styles()
+
+        self.main_container = ttk.Frame(self.root, padding=12)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Encabezado General
+        header = ttk.Frame(self.main_container)
+        header.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(header, text="Suite de Procesamiento y Auditoría de Entregables PDF", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text="Modo 100% Local | Soporte de Red UNC", style="Bold.TLabel").pack(side=tk.RIGHT)
+
+        # 2. Panel Global de Sliders de Recursos (Siempre visible y compartido por todas las herramientas)
+        self.resource_panel = GlobalResourcePanel(self.main_container)
+        self.resource_panel.pack(fill=tk.X, pady=(0, 10))
+
+        # 3. Contenedor dinámico de vistas (Menú de herramientas <-> Herramienta abierta)
+        self.workspace_container = ttk.Frame(self.main_container)
+        self.workspace_container.pack(fill=tk.BOTH, expand=True)
+
+        self.current_view = None
+        self.show_tools_menu()
+
+    def _setup_styles(self):
+        style = ttk.Style(self.root)
+        if "vista" in style.theme_names():
+            style.theme_use("vista")
+        elif "xpnative" in style.theme_names():
+            style.theme_use("xpnative")
+        else:
+            style.theme_use("clam")
+
+        style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
+        style.configure("Subheader.TLabel", font=("Segoe UI", 11, "bold"), foreground="#003366")
+        style.configure("Subtitle.TLabel", font=("Segoe UI", 9), foreground="#555555")
+        style.configure("Section.TLabelframe.Label", font=("Segoe UI", 10, "bold"), foreground="#003366")
+        style.configure("Bold.TLabel", font=("Segoe UI", 9, "bold"))
+        style.configure("Accent.TLabel", font=("Segoe UI", 9, "bold"), foreground="#005a9e")
+        style.configure("Success.TLabel", font=("Segoe UI", 9, "bold"), foreground="#107c10")
+        style.configure("Danger.TLabel", font=("Segoe UI", 9, "bold"), foreground="#c50f1f")
+        style.configure("Nvidia.TLabel", font=("Segoe UI", 9, "bold"), foreground="#2b7a0b")
+        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 6))
+        style.configure("Action.TButton", font=("Segoe UI", 9), padding=(8, 4))
+        style.configure("Treeview", font=("Segoe UI", 9), rowheight=26)
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+
+    def _clear_workspace(self):
+        if self.current_view is not None:
+            self.current_view.destroy()
+            self.current_view = None
+
+    def show_tools_menu(self):
+        self._clear_workspace()
+        self.current_view = ToolsMenuView(self.workspace_container, on_open_tool=self.open_tool)
+        self.current_view.pack(fill=tk.BOTH, expand=True)
+
+    def open_tool(self, tool_key: str):
+        self._clear_workspace()
+        if tool_key == "cover_checker":
+            self.current_view = CoverCheckerToolView(
+                self.workspace_container,
+                resource_panel=self.resource_panel,
+                on_back=self.show_tools_menu
+            )
+            self.current_view.pack(fill=tk.BOTH, expand=True)
+
+
 def main():
     root = tk.Tk()
-    app = CoverCheckerWinApp(root)
+    app = SuiteMainWindow(root)
     root.mainloop()
 
 
