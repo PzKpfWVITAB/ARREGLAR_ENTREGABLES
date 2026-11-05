@@ -1,23 +1,22 @@
-# Verificador de Carátulas en Documentos PDF (100% Local)
+# Verificador de Carátulas en Documentos PDF (Windows Forms Nativo)
 
-Herramienta de Visión Artificial optimizada para auditar lotes masivos de documentos PDF ubicados en **carpetas de red (rutas UNC `\\servidor\recurso` o unidades mapeadas `Z:\`)**, identificando de forma precisa qué archivos cuentan con su carátula institucional/modelo y cuáles carecen de ella.
+Herramienta de escritorio para Windows con **Visión Artificial 100% Local** diseñada para auditar lotes masivos de archivos PDF en **carpetas de red (rutas UNC `\\servidor\recurso` o unidades mapeadas `Z:\`)**, detectando qué documentos tienen su carátula institucional y cuáles carecen de ella.
 
 ---
 
 ## Características Principales
 
-1. **Modo 100% Local (Sin consumo ni dependencia de APIs externas):**
-   - Utiliza **PyMuPDF 2.0** y **OpenCV** con aceleración matricial NumPy.
-   - Algoritmo de comparación visual basado en **ORB (Oriented FAST and Rotated BRIEF)**, filtrado **Lowe's Ratio Test** y matriz de transformación homográfica con **RANSAC**.
-   - Resistente a documentos degradados, borrosos, con fondos opacos o ligeras variaciones de resolución/escaneo.
-
-2. **Diseñado para Rutas de Red (SMB / UNC / Shares):**
+1. **Interfaz Nativa de Windows (Sin Electron ni Node.js):**
+   - Construida con formularios nativos de Windows (`tkinter` / `ttk`), arranque instantáneo, consumo mínimo de memoria y **únicamente requiere Python**.
+2. **Optimización de Hardware al 90% y Soporte GPU NVIDIA:**
+   - **Sección de Configuración:** Detecta automáticamente los núcleos lógicos/físicos del CPU, la memoria RAM total/disponible y la tarjeta gráfica dedicada (**NVIDIA GeForce / RTX / Quadro** o AMD/Intel con OpenCL).
+   - **Procesamiento Paralelo:** Asigna por defecto el **90% de los hilos del procesador** y memoria mediante un pool de workers concurrentes, con control deslizante ajustable entre 50% y 100%.
+3. **Tolerancia a Fallos en Rutas de Red (SMB / UNC):**
    - Manejo de rutas estilo `\\192.168.1.50\expedientes` o `Z:\contratos`.
-   - Copia segura en buffer temporal (`tempfile`) con reintentos exponenciales para mitigar caídas de conexión, latencias de red y bloqueos de archivos abiertos.
-
-3. **Resultados Claros y Atajos Rápidos:**
-   - **Consola interactiva:** Selección por número para abrir el PDF al instante o revelarlo en el Explorador de Windows.
-   - **Dashboard HTML interactivo:** Genera `reporte_caratulas.html` con estadísticas, filtros instantáneos (*Sin Carátula*, *Con Carátula*, *Errores*), enlaces directos de apertura y botón para copiar rutas al portapapeles.
+   - Lectura mediante buffers temporales locales con reintentos automáticos para evitar bloqueos de archivos y caídas de red.
+4. **Atajos Rápidos Integrados:**
+   - **Doble clic** o **clic derecho** sobre cualquier fila de la tabla para abrir el PDF directamente, resaltarlo en el Explorador de Windows o copiar su ruta de red.
+   - Botones de exportación a **CSV** y generación de **Reporte Interactivo HTML**.
 
 ---
 
@@ -26,68 +25,30 @@ Herramienta de Visión Artificial optimizada para auditar lotes masivos de docum
 ```text
 c:\laragon\www\ARREGLAR_ENTREGABLES\
 │
-├── config.py                 # Parámetros (DPI, umbrales de inliers, reintentos de red)
-├── run_checker.py            # CLI interactivo principal
-├── reporte_caratulas.html    # Reporte generado al finalizar cada análisis
+├── app_gui.py                # Aplicación de Escritorio Windows Forms (Interfaz Principal)
+├── run_checker.py            # Versión alternativa por línea de comandos (CLI)
+├── config.py                 # Parámetros globales (DPI, umbrales ORB/RANSAC, red)
+├── instalar.bat              # Instalador portátil de 1 clic (solo requiere Python)
+├── ejecutar.bat              # Lanzador directo de la interfaz gráfica
+├── requirements.txt          # Librerías (PyMuPDF, OpenCV, NumPy, psutil)
 │
 ├── src/
-│   ├── network_io.py         # Manejador de rutas de red y tolerancia a fallos
-│   ├── pdf_processor.py      # Renderizado de páginas con PyMuPDF y CLAHE OpenCV
-│   ├── cover_matcher.py      # Motor de comparación geométrica y rasgos visuales
-│   └── report_generator.py   # Generador de dashboard HTML y acciones del sistema
+│   ├── hardware_detector.py  # Auto-detección de CPU, RAM y GPU dedicada NVIDIA/OpenCL
+│   ├── network_io.py         # Manejador robusto de rutas de red UNC y caché local
+│   ├── pdf_processor.py      # Renderizado con PyMuPDF y mejora CLAHE en OpenCV
+│   ├── cover_matcher.py      # Comparación geométrica visual (ORB + Lowe Ratio + RANSAC)
+│   └── report_generator.py   # Acciones del sistema y generador de reporte HTML
 │
 └── tests/
-    └── test_cover_pipeline.py# Pruebas automatizadas con PDFs sintéticos
+    └── test_cover_pipeline.py# Suite de pruebas unitarias
 ```
 
 ---
 
-## Instrucciones de Instalación y Ejecución Portátil
+## Instalación y Ejecución en Cualquier PC
 
-Esta versión cuenta con una **interfaz gráfica moderna en Electron** y un entorno **100% portable** que no interfiere con librerías globales del sistema.
-
-### 1. Para llevar a otra PC (Instalación en 1 Clic)
-1. Copia la carpeta del proyecto a la nueva máquina.
-2. Asegúrate de tener instalados **Python (3.10+)** y **Node.js (LTS)** en esa máquina.
-3. Haz doble clic en el archivo:
-   ```cmd
-   instalar.bat
-   ```
-   *El instalador creará automáticamente un entorno virtual aislado (`.venv`), descargará las librerías de visión artificial (`requirements.txt`) e instalará Electron localmente.*
-
-### 2. Para Iniciar la Aplicación
-Simplemente haz doble clic en:
-```cmd
-ejecutar.bat
-```
-*(Si no se ha instalado previamente, `ejecutar.bat` detectará la falta de dependencias y lanzará el instalador por ti).*
-
----
-
-## Características de la Interfaz Electron
-
-- **Selector y Validador de Red:** Explora o pega rutas UNC (`\\servidor\carpeta`) con botón de verificación en vivo.
-- **Selector de Carátula:** Elige el archivo PDF modelo con el diálogo nativo de Windows.
-- **Monitoreo en Tiempo Real:** Barra de progreso con porcentaje, archivo actual y contador.
-- **Tarjetas de Estadísticas Clicables:** Filtra al instante entre *Todos*, *Sin Carátula*, *Con Carátula* y *Errores*.
-- **Atajos Directos por Fila:**
-  - 📄 **Abrir:** Lanza el PDF en el visor predeterminado.
-  - 📂 **Carpeta:** Abre el Explorador de Windows con el archivo exacto seleccionado.
-  - 📋 **Copiar:** Copia la ruta de red directa al portapapeles.
-- **Exportación:** Botón para exportar todos los hallazgos a archivo `.csv`.
-- **Modo Consola Alternativo:** Aún puedes ejecutar `python run_checker.py` si deseas usar la versión puramente por terminal.
-
----
-
-## Atajos de Teclado en Consola
-
-Al terminar el análisis se mostrará el resumen y tendrás disponibles los siguientes comandos:
-
-| Comando | Acción |
-| :--- | :--- |
-| `[número]` (ej. `3`) | Abre directamente el PDF `#3` en tu visor predeterminado de Windows. |
-| `e [número]` (ej. `e 3`) | Abre el Explorador de Windows en la carpeta de red con el archivo `#3` seleccionado. |
-| `s` | Filtra e imprime en pantalla únicamente los archivos **SIN CARÁTULA**. |
-| `c` | Filtra e imprime en pantalla únicamente los archivos **CON CARÁTULA**. |
-| `r` | Vuelve a abrir el reporte HTML interactivo en el navegador. |
-| `q` | Salir del programa. |
+1. **Requisito único:** Tener instalado **[Python 3.10+](https://www.python.org/downloads/)** (marcando la casilla *"Add python.exe to PATH"*). **Ya no se necesita Node.js ni npm.**
+2. **Instalar (primera vez):**
+   Haz doble clic en **`instalar.bat`**. Creará el entorno aislado `.venv` e instalará OpenCV, PyMuPDF y psutil.
+3. **Ejecutar:**
+   Haz doble clic en **`ejecutar.bat`**. Se abrirá directamente la ventana de Windows del verificador.
